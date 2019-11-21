@@ -9,6 +9,7 @@ from torch.utils.data import Dataset
 import torch
 
 class MISC(Dataset):
+    '''process the training/validaiton set'''
     def __init__(self, root, transform, fake_length=50000):
         ls = os.listdir(root)
         self.transform = transform
@@ -20,13 +21,16 @@ class MISC(Dataset):
         self.fake_length = fake_length
 
     def __len__(self):
-        #return len(self.imgs)
+        '''since we only have a few images, so we
+        fool the dataloder by sampling the images with replacement when
+        creating a batch'''
         return self.fake_length
 
     def __getitem__(self, idx):
         return self.transform(self.imgs[idx%self.real_length])
 
 class PublicTest(Dataset):
+    '''process the public test set'''
     def __init__(self, root, transform, patch_width):
         ls = os.listdir(root)
         self.transform = transform
@@ -46,6 +50,7 @@ class PublicTest(Dataset):
 
 
 def validation(net, loader, sigma, args):
+    '''calculate the validation loss'''
     criterion = torch.nn.MSELoss()
     net.eval()
     total_loss = 0
@@ -68,6 +73,7 @@ def validation(net, loader, sigma, args):
 
 
 def get_patches(img, patch_width):
+    '''split the testing image into patch with specific width'''
     pw = patch_width
     h, w = img.shape
     patches = torch.zeros((int(h // pw), int(w // pw), pw, pw))
@@ -87,6 +93,10 @@ def calculate_psnr(img1, img2):
 
 
 def test(net, loader, sigma, patch_width):
+    '''using public test image for testing
+    image can be downloaded from:
+    https://www.io.csic.es/PagsPers/JPortilla/image-processing/bls-gsm/63-test-images
+    '''
     net.eval()
     pw = patch_width
     total_mse = []
