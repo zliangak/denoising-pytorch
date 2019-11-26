@@ -7,6 +7,7 @@ from PIL import Image
 
 from torch.utils.data import Dataset
 import torch
+import torch.nn as nn
 
 class MISC(Dataset):
     '''process the training/validaiton set'''
@@ -54,6 +55,7 @@ def validation(net, loader, sigma, args):
     criterion = torch.nn.MSELoss()
     net.eval()
     total_loss = 0
+    total_loss_mse = 0
 
     for batch_idx, x in enumerate(loader):
 
@@ -62,13 +64,19 @@ def validation(net, loader, sigma, args):
         x = x.cuda()
         output = net(x_noise)
 
-        if args.model == 'da':
+        if args.net == 'da':
             loss = criterion(output, x.view(x.shape[0], -1))
-        elif args.model == 'convda':
+        elif args.net in ['convda', 'generator']:
             loss = criterion(output, x)
+        elif args.net in ['vae', 'dvae']:
+            recon_batch, mu, logvar, Z = net(x)
+            loss = net.loss_function(recon_batch, x, mu, logvar)
+            loss_mse = calculate_mse(x, recon_batch.mean(dim=1))
 
         total_loss += loss.item()
+#       total_loss_mse += loss_mse.item()
 
+#   return total_loss/(batch_idx+1), total_loss_mse/(batch_idx+1)
     return total_loss/(batch_idx+1)
 
 
@@ -92,19 +100,19 @@ def calculate_psnr(img1, img2):
     return 10 * torch.log(MAX**2/calculate_mse(img1, img2)) / torch.log(torch.tensor(10.))
 
 
-def test(net, loader, sigma, patch_width):
+def test(net, loader, args):
     '''using public test image for testing
     image can be downloaded from:
     https://www.io.csic.es/PagsPers/JPortilla/image-processing/bls-gsm/63-test-images
     '''
     net.eval()
-    pw = patch_width
+    pw = args.patch_width
     total_mse = []
     total_psnr = []
     img_pairs = []
     for batch_idx, img1 in enumerate(loader):
         img1 = copy.deepcopy(img1[0,0]) # original image
-        img_noise = torch.clamp(copy.deepcopy(img1) + torch.randn(img1.shape) * sigma, 0, 1) # noise image
+        img_noise = torch.clamp(copy.deepcopy(img1) + torch.randn(img1.shape) * args.sigma, 0, 1) # noise image
         patches = get_patches(img_noise, pw)
         img2 = torch.zeros_like(img1) # recovered image
         h, w = img1.shape
@@ -113,7 +121,11 @@ def test(net, loader, sigma, patch_width):
                 patch = patches[h_idx, w_idx,:, :]
                 patch = patch[None, None, :, :]
                 patch = patch.cuda()
-                patch_clean = net(patch)
+                if args.net in ['dvae', 'vae']:
+                    patch_clean, *_ = net(patch)
+                    patch_clean = patch_clean.mean(dim=1)
+                else:
+                    patch_clean = net(patch)
                 img2[h_idx * pw:(h_idx + 1) * pw, w_idx * pw:(w_idx + 1) * pw] = patch_clean.view(pw, pw).detach()
         mse = calculate_mse(img1, img2)
         psnr = calculate_psnr(img1, img2)
@@ -123,4 +135,20 @@ def test(net, loader, sigma, patch_width):
 
     return np.mean(total_mse), np.mean(total_psnr), img_pairs
 
+def l1_regularization(net):
+    l1_loss = 0
+    for param in net.parameters():
+        l1_loss += torch.sum(torch.abs(param))
+    return l1_loss
 
+def initialize_weights(net):
+    for m in net.modules():
+        if isinstance(m, nn.Conv2d):
+            m.weight.data.normal_(0, 0.02)
+            m.bias.data.zero_()
+        elif isinstance(m, nn.ConvTranspose2d):
+            m.weight.data.normal_(0, 0.02)
+            m.bias.data.zero_()
+        elif isinstance(m, nn.Linear):
+            m.weight.data.normal_(0, 0.02)
+            m.bias.data.zero_()
